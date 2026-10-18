@@ -2,253 +2,302 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>FLIP — прототип</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Датчики: диагностика</title>
 <style>
-  html, body {
-    margin: 0; padding: 0; height: 100%; overflow: hidden;
-    background: #000; color: #fff;
-    font-family: -apple-system, system-ui, sans-serif;
-    user-select: none; -webkit-user-select: none;
-    touch-action: none;
+  body {
+    margin: 0; padding: 16px; box-sizing: border-box;
+    background: #0d0d0d; color: #e0e0e0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px; line-height: 1.5;
   }
-  .screen {
-    position: absolute; inset: 0;
-    display: none; flex-direction: column;
-    align-items: center; justify-content: center;
-    padding: 24px; box-sizing: border-box;
-    text-align: center;
-  }
-  .screen.active { display: flex; }
-  h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: 8px; font-weight: 200; }
-  h2 { font-size: 14px; margin: 0 0 16px; font-weight: 400; opacity: .5; letter-spacing: 4px; text-transform: uppercase; }
-  .big { font-size: 64px; font-weight: 100; letter-spacing: 2px; }
-  .dim { opacity: .4; font-size: 14px; line-height: 1.6; }
+  h1 { font-size: 16px; margin: 0 0 12px; font-weight: 600; color: #fff; }
+  .step { margin-bottom: 14px; padding: 10px 12px; border-left: 3px solid #333; background: #161616; border-radius: 2px; }
+  .step.ok { border-left-color: #2e7d32; }
+  .step.fail { border-left-color: #c62828; }
+  .step.warn { border-left-color: #f9a825; }
+  .step-title { font-weight: 700; margin-bottom: 4px; }
+  .step-detail { opacity: .8; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .live { margin-top: 20px; padding: 12px; background: #111; border: 1px solid #2a2a2a; border-radius: 2px; }
+  .live-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; opacity: .5; margin-bottom: 8px; }
+  .row { display: flex; justify-content: space-between; margin-bottom: 2px; }
+  .row span:last-child { color: #4fc3f7; font-variant-numeric: tabular-nums; }
+  .row.dim span:last-child { color: #666; }
   button {
-    background: #fff; color: #000; border: 0;
-    padding: 20px 40px; font-size: 16px; font-weight: 700;
-    letter-spacing: 3px; border-radius: 2px;
-    margin-top: 32px; touch-action: manipulation;
-    font-family: inherit;
+    width: 100%; padding: 16px; margin-bottom: 16px;
+    background: #fff; color: #000; border: 0; border-radius: 2px;
+    font: inherit; font-weight: 700; letter-spacing: 2px; font-size: 14px;
   }
-  .axis { display: flex; gap: 32px; margin-top: 24px; font-size: 16px; font-family: ui-monospace, monospace; }
-  .axis .ok { color: #3f3; }
-  .axis .fail { color: #f33; }
-  #log {
-    position: fixed; bottom: 4px; left: 4px; right: 4px;
-    font-size: 9px; opacity: .25; font-family: monospace;
-    white-space: pre-wrap; pointer-events: none;
-    max-height: 100px; overflow: hidden;
-  }
+  button:active { opacity: .7; }
+  #log { margin-top: 12px; font-size: 11px; opacity: .5; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
 </style>
 </head>
 <body>
 
-<div class="screen active" id="s-disclaimer">
-  <h1>FLIP</h1>
-  <h2>prototype</h2>
-  <p class="dim" style="max-width: 300px;">
-    Цель: один оборот по <strong>X</strong> и один по <strong>Z</strong> за один подброс.<br><br>
-    <strong style="color:#f33;">Разбитый телефон — твоя ответственность.</strong><br><br>
-    Играй над мягкой поверхностью.
-  </p>
-  <button id="btn-start">Я В ДЕЛЕ</button>
-</div>
+<h1>ДИАГНОСТИКА ДАТЧИКОВ</h1>
+<button id="run">ЗАПУСТИТЬ ПРОВЕРКУ</button>
 
-<div class="screen" id="s-ready">
-  <h2>готов</h2>
-  <div class="big">X+Z</div>
-  <p class="dim">Положи ровно на ладонь.<br>Подбрось с вращением по X и Z.</p>
-</div>
+<div id="steps"></div>
 
-<div class="screen" id="s-flight">
-  <h2>в воздухе</h2>
-  <div class="big" id="flight-count">0° · 0°</div>
-</div>
-
-<div class="screen" id="s-catch">
-  <h2>поймал</h2>
-  <div class="big dim">·</div>
-</div>
-
-<div class="screen" id="s-result">
-  <h2 id="result-verdict">—</h2>
-  <div class="axis">
-    <div id="ax-x">X: 0°</div>
-    <div id="ax-z">Z: 0°</div>
-  </div>
-  <button id="btn-again">ЕЩЁ</button>
+<div class="live" id="live" style="display:none">
+  <div class="live-title">Живые данные</div>
+  <div class="row"><span>Accelerometer</span><span id="v-acc">—</span></div>
+  <div class="row"><span>Gyroscope</span><span id="v-gyro">—</span></div>
+  <div class="row"><span>devicemotion</span><span id="v-dm">—</span></div>
+  <div class="row dim"><span>событий devicemotion</span><span id="v-dm-count">0</span></div>
 </div>
 
 <div id="log"></div>
 
-<script type="module">
+<script>
 const $ = id => document.getElementById(id);
-let logLines = [];
+const stepsEl = $('steps');
+const logEl = $('log');
+
+function addStep(title, status, detail) {
+  const div = document.createElement('div');
+  div.className = 'step ' + (status || '');
+  div.innerHTML = `<div class="step-title">${title}</div><div class="step-detail">${detail || ''}</div>`;
+  stepsEl.appendChild(div);
+}
+
 function log(msg) {
-  logLines.unshift(msg);
-  logLines = logLines.slice(0, 8);
-  $('log').textContent = logLines.join('\n');
+  logEl.textContent = `> ${msg}\n` + logEl.textContent;
 }
 
-// === Настройки ===
-const FREE_FALL_THRESHOLD = 3.0;      // м/с² — ниже = отрыв
-const IMPACT_THRESHOLD = 25.0;        // м/с² — выше = поимка
-const FLIGHT_TIMEOUT_MS = 4000;
-const MIN_FLIGHT_MS = 150;
-const TOLERANCE_DEG = 75;             // ±75° от 360°
-const RESULT_DELAY_MS = 1000;
-const SENSOR_FREQ = 100;
+// ---------- 1. Базовое окружение ----------
+function checkEnvironment() {
+  const secure = window.isSecureContext;
+  const host = location.hostname;
+  const proto = location.protocol;
 
-// === Состояние ===
-let accel = null, gyro = null;
-let state = 'DISCLAIMER';
-let gyroBias = { x: 0, y: 0, z: 0 };
-let totalRad = { x: 0, y: 0, z: 0 };
-let flightStart = 0;
-let lastT = 0;
+  addStep(
+    'Secure Context',
+    secure ? 'ok' : 'fail',
+    `isSecureContext = ${secure}\nprotocol = ${proto}\nhostname = ${host}`
+  );
 
-function show(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  $(id).classList.add('active');
-}
-
-async function initSensors() {
-  if (!('Accelerometer' in window) || !('Gyroscope' in window)) {
-    throw new Error('Generic Sensor API не поддерживается');
+  if (!secure) {
+    addStep(
+      'Почему это важно',
+      'fail',
+      'Без secure context Chrome блокирует все сенсоры. Нужен HTTPS или localhost. GitHub Pages даёт HTTPS, но проверь, что открыт именно https://, а не http://.'
+    );
   }
-  accel = new Accelerometer({ frequency: SENSOR_FREQ });
-  gyro  = new Gyroscope({ frequency: SENSOR_FREQ });
-
-  await new Promise((resolve, reject) => {
-    let a = false, g = false;
-    const check = () => { if (a && g) resolve(); };
-    accel.addEventListener('reading', () => { a = true; check(); }, { once: true });
-    gyro .addEventListener('reading', () => { g = true; check(); }, { once: true });
-    accel.addEventListener('error', reject, { once: true });
-    gyro .addEventListener('error', reject, { once: true });
-    accel.start();
-    gyro.start();
-    setTimeout(() => { if (!a || !g) reject(new Error('Датчики молчат')); }, 3000);
-  });
 }
 
-function calibrate() {
-  const samples = [];
-  let count = 0;
-  return new Promise(resolve => {
-    const onRead = () => {
-      samples.push({ x: gyro.x, y: gyro.y, z: gyro.z });
-      if (++count >= 30) {
-        gyro.removeEventListener('reading', onRead);
-        gyroBias.x = samples.reduce((s, v) => s + v.x, 0) / samples.length;
-        gyroBias.y = samples.reduce((s, v) => s + v.y, 0) / samples.length;
-        gyroBias.z = samples.reduce((s, v) => s + v.z, 0) / samples.length;
-        log(`bias ${gyroBias.x.toFixed(3)} ${gyroBias.y.toFixed(3)} ${gyroBias.z.toFixed(3)}`);
-        resolve();
+// ---------- 2. Наличие конструкторов ----------
+function checkApis() {
+  const hasAcc = 'Accelerometer' in window;
+  const hasGyro = 'Gyroscope' in window;
+  const hasDM = 'DeviceMotionEvent' in window;
+
+  addStep(
+    'Generic Sensor API',
+    hasAcc && hasGyro ? 'ok' : 'fail',
+    `Accelerometer: ${hasAcc}\nGyroscope: ${hasGyro}\nDeviceMotionEvent: ${hasDM}`
+  );
+
+  if (!hasAcc || !hasGyro) {
+    addStep(
+      'Что делать',
+      'warn',
+      'Конструкторы отсутствуют. Это значит, что либо браузер их не поддерживает, либо они отключены флагом. Проверь версию Chrome (152 должна поддерживать) и не включён ли какой-то режим экономии.'
+    );
+  }
+
+  return { hasAcc, hasGyro, hasDM };
+}
+
+// ---------- 3. Permissions API ----------
+async function checkPermissions() {
+  const names = ['accelerometer', 'gyroscope'];
+  for (const name of names) {
+    if (!navigator.permissions || !navigator.permissions.query) {
+      addStep(`Permissions API: ${name}`, 'warn', 'navigator.permissions.query недоступен');
+      continue;
+    }
+    try {
+      const status = await navigator.permissions.query({ name });
+      addStep(
+        `Разрешение: ${name}`,
+        status.state === 'granted' ? 'ok' : status.state === 'denied' ? 'fail' : 'warn',
+        `state = "${status.state}"`
+      );
+      status.onchange = () => {
+        log(`permission ${name} -> ${status.state}`);
+        addStep(
+          `Разрешение: ${name} (изменилось)`,
+          status.state === 'granted' ? 'ok' : 'fail',
+          `state = "${status.state}"`
+        );
+      };
+    } catch (e) {
+      addStep(`Разрешение: ${name}`, 'warn', `Ошибка query: ${e.name}: ${e.message}`);
+    }
+  }
+}
+
+// ---------- 4. Прямая попытка конструктора ----------
+async function tryConstruct() {
+  const results = { acc: null, gyro: null };
+
+  if ('Accelerometer' in window) {
+    try {
+      const a = new Accelerometer({ frequency: 60 });
+      results.acc = { ok: true, instance: a };
+      addStep('new Accelerometer()', 'ok', 'Конструктор создан без исключения');
+    } catch (e) {
+      results.acc = { ok: false, error: e };
+      addStep('new Accelerometer()', 'fail', `${e.name}: ${e.message}`);
+      explainConstructorError('Accelerometer', e);
+    }
+  }
+
+  if ('Gyroscope' in window) {
+    try {
+      const g = new Gyroscope({ frequency: 60 });
+      results.gyro = { ok: true, instance: g };
+      addStep('new Gyroscope()', 'ok', 'Конструктор создан без исключения');
+    } catch (e) {
+      results.gyro = { ok: false, error: e };
+      addStep('new Gyroscope()', 'fail', `${e.name}: ${e.message}`);
+      explainConstructorError('Gyroscope', e);
+    }
+  }
+
+  return results;
+}
+
+function explainConstructorError(label, e) {
+  if (e.name === 'SecurityError') {
+    addStep(
+      `Что значит SecurityError для ${label}`,
+      'fail',
+      'Это блокировка на уровне Permissions Policy. Даже на HTTPS Chrome может запретить сенсор, если политика документа это не разрешает. GitHub Pages не отправляет заголовок Permissions-Policy, но браузер может применять политику по умолчанию или из-за настроек сайта.'
+    );
+  } else if (e.name === 'NotAllowedError') {
+    addStep(
+      `Что значит NotAllowedError для ${label}`,
+      'warn',
+      'Пользователь или браузер не дал разрешение. Попробуй найти в настройках сайта (замок в адресной строке → Разрешения) пункт «Датчики движения» и поставить «Разрешить».'
+    );
+  } else if (e.name === 'NotReadableError') {
+    addStep(
+      `Что значит NotReadableError для ${label}`,
+      'warn',
+      'Датчик есть, но недоступен (например, занят другим приложением или отключён в системе).'
+    );
+  }
+}
+
+// ---------- 5. Запуск и чтение ----------
+function startSensors(results) {
+  for (const [key, res] of Object.entries(results)) {
+    if (!res || !res.ok) continue;
+    const sensor = res.instance;
+    const label = key === 'acc' ? 'Accelerometer' : 'Gyroscope';
+
+    sensor.addEventListener('reading', () => {
+      const el = key === 'acc' ? $('v-acc') : $('v-gyro');
+      if (key === 'acc') {
+        el.textContent = `${sensor.x.toFixed(3)}, ${sensor.y.toFixed(3)}, ${sensor.z.toFixed(3)}`;
+      } else {
+        el.textContent = `${sensor.x.toFixed(3)}, ${sensor.y.toFixed(3)}, ${sensor.z.toFixed(3)}`;
       }
-    };
-    gyro.addEventListener('reading', onRead);
-  });
-}
+    });
 
-function tick(now) {
-  requestAnimationFrame(tick);
-  if (!accel || !gyro) return;
-  const dt = lastT ? (now - lastT) / 1000 : 0;
-  lastT = now;
-  if (dt <= 0 || dt > 0.1) return;
+    sensor.addEventListener('error', (e) => {
+      addStep(`${label}: ошибка после старта`, 'fail', `${e.error.name}: ${e.error.message}`);
+    });
 
-  const ax = accel.x, ay = accel.y, az = accel.z;
-  const mag = Math.sqrt(ax*ax + ay*ay + az*az);
-
-  if (state === 'READY') {
-    if (mag < FREE_FALL_THRESHOLD) {
-      state = 'FLIGHT';
-      totalRad = { x: 0, y: 0, z: 0 };
-      flightStart = now;
-      $('flight-count').textContent = '0° · 0°';
-      show('s-flight');
-      log(`release ${mag.toFixed(1)}`);
-    }
-  } else if (state === 'FLIGHT') {
-    const wx = gyro.x - gyroBias.x;
-    const wy = gyro.y - gyroBias.y;
-    const wz = gyro.z - gyroBias.z;
-    totalRad.x += Math.abs(wx) * dt;
-    totalRad.y += Math.abs(wy) * dt;
-    totalRad.z += Math.abs(wz) * dt;
-
-    const degX = Math.round(totalRad.x * 180 / Math.PI);
-    const degZ = Math.round(totalRad.z * 180 / Math.PI);
-    $('flight-count').textContent = `${degX}° · ${degZ}°`;
-
-    const flightMs = now - flightStart;
-    if (mag > IMPACT_THRESHOLD && flightMs > MIN_FLIGHT_MS) {
-      state = 'PENDING';
-      log(`catch ${mag.toFixed(1)} after ${Math.round(flightMs)}ms`);
-      if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-      show('s-catch');
-      setTimeout(() => { state = 'RESULT'; evaluate(); }, RESULT_DELAY_MS);
-    } else if (flightMs > FLIGHT_TIMEOUT_MS) {
-      state = 'RESULT';
-      $('result-verdict').textContent = 'ТАЙМАУТ';
-      $('result-verdict').style.color = '#f33';
-      $('ax-x').textContent = `X: ${Math.round(totalRad.x * 180 / Math.PI)}°`;
-      $('ax-z').textContent = `Z: ${Math.round(totalRad.z * 180 / Math.PI)}°`;
-      $('ax-x').className = 'fail';
-      $('ax-z').className = 'fail';
-      show('s-result');
+    try {
+      sensor.start();
+      addStep(`${label}.start()`, 'ok', 'Датчик запущен');
+    } catch (e) {
+      addStep(`${label}.start()`, 'fail', `${e.name}: ${e.message}`);
     }
   }
 }
 
-function evaluate() {
-  const degX = totalRad.x * 180 / Math.PI;
-  const degZ = totalRad.z * 180 / Math.PI;
-  const xOK = Math.abs(degX - 360) < TOLERANCE_DEG;
-  const zOK = Math.abs(degZ - 360) < TOLERANCE_DEG;
-
-  $('ax-x').textContent = `X: ${Math.round(degX)}°`;
-  $('ax-z').textContent = `Z: ${Math.round(degZ)}°`;
-  $('ax-x').className = xOK ? 'ok' : 'fail';
-  $('ax-z').className = zOK ? 'ok' : 'fail';
-
-  const v = $('result-verdict');
-  if (xOK && zOK) {
-    v.textContent = 'ТРЮК!';
-    v.style.color = '#3f3';
-    if (navigator.vibrate) navigator.vibrate([40, 60, 40, 60, 40]);
-  } else {
-    v.textContent = 'ПРОМАХ';
-    v.style.color = '#f33';
-    if (navigator.vibrate) navigator.vibrate(150);
+// ---------- 6. DeviceMotion fallback ----------
+function setupDeviceMotion(hasDM) {
+  if (!hasDM) {
+    addStep('DeviceMotionEvent', 'warn', 'Событие отсутствует в window');
+    return;
   }
-  show('s-result');
-  log(`X=${degX.toFixed(0)} Z=${degZ.toFixed(0)}`);
+
+  let count = 0;
+  let received = false;
+
+  const handler = (e) => {
+    count++;
+    received = true;
+    $('v-dm-count').textContent = count;
+    const acc = e.accelerationIncludingGravity;
+    const rot = e.rotationRate;
+    $('v-dm').textContent =
+      `acc: ${acc ? `${acc.x?.toFixed(2)}, ${acc.y?.toFixed(2)}, ${acc.z?.toFixed(2)}` : '—'} | ` +
+      `rot: ${rot ? `${rot.alpha?.toFixed(2)}, ${rot.beta?.toFixed(2)}, ${rot.gamma?.toFixed(2)}` : '—'}`;
+  };
+
+  window.addEventListener('devicemotion', handler, { passive: true });
+
+  addStep(
+    'DeviceMotionEvent',
+    'ok',
+    'Слушатель добавлен. Потряси телефон — если счётчик внизу растёт, этот API работает, даже если Generic Sensor API заблокирован.'
+  );
+
+  // Через 3 секунды проверим, пришли ли события
+  setTimeout(() => {
+    if (!received) {
+      addStep(
+        'DeviceMotionEvent: данные не пришли',
+        'warn',
+        'За 3 секунды не было ни одного события. Это может значить, что и этот API заблокирован, или телефон действительно неподвижен (но обычно события идут всегда).'
+      );
+    } else {
+      addStep(
+        'DeviceMotionEvent: данные идут',
+        'ok',
+        `Получено событий: ${count}. Если Generic Sensor API не работает, можно временно построить прототип на DeviceMotion.`
+      );
+    }
+  }, 3000);
 }
 
-$('btn-start').addEventListener('click', async () => {
-  try {
-    await initSensors();
-    await calibrate();
-    state = 'READY';
-    show('s-ready');
-    requestAnimationFrame(tick);
-  } catch (e) {
-    log('ERR ' + e.message);
-    alert('Не удалось получить доступ к датчикам.\n' + e.message +
-          '\n\nНужен HTTPS и реальный телефон.');
-  }
-});
+// ---------- Главный сценарий ----------
+$('run').addEventListener('click', async () => {
+  stepsEl.innerHTML = '';
+  logEl.textContent = '';
+  $('live').style.display = 'block';
+  $('v-acc').textContent = '—';
+  $('v-gyro').textContent = '—';
+  $('v-dm').textContent = '—';
+  $('v-dm-count').textContent = '0';
 
-$('btn-again').addEventListener('click', () => {
-  state = 'READY';
-  show('s-ready');
-});
+  log('старт диагностики');
 
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') lastT = 0;
+  // 1
+  checkEnvironment();
+
+  // 2
+  const apis = checkApis();
+
+  // 3
+  await checkPermissions();
+
+  // 4
+  const results = await tryConstruct();
+
+  // 5
+  startSensors(results);
+
+  // 6
+  setupDeviceMotion(apis.hasDM);
+
+  log('диагностика завершена');
 });
 </script>
 </body>
