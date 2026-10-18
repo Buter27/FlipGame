@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>FLIP — прототип</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #000; color: #fff;
+    font-family: -apple-system, system-ui, sans-serif;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  .screen {
+    position: absolute; inset: 0;
+    display: none; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 24px; box-sizing: border-box;
+    text-align: center;
+  }
+  .screen.active { display: flex; }
+  h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: 8px; font-weight: 200; }
+  h2 { font-size: 14px; margin: 0 0 16px; font-weight: 400; opacity: .5; letter-spacing: 4px; text-transform: uppercase; }
+  .big { font-size: 64px; font-weight: 100; letter-spacing: 2px; }
+  .dim { opacity: .4; font-size: 14px; line-height: 1.6; }
+  button {
+    background: #fff; color: #000; border: 0;
+    padding: 20px 40px; font-size: 16px; font-weight: 700;
+    letter-spacing: 3px; border-radius: 2px;
+    margin-top: 32px; touch-action: manipulation;
+    font-family: inherit;
+  }
+  .axis { display: flex; gap: 32px; margin-top: 24px; font-size: 16px; font-family: ui-monospace, monospace; }
+  .axis .ok { color: #3f3; }
+  .axis .fail { color: #f33; }
+  #log {
+    position: fixed; bottom: 4px; left: 4px; right: 4px;
+    font-size: 9px; opacity: .25; font-family: monospace;
+    white-space: pre-wrap; pointer-events: none;
+    max-height: 100px; overflow: hidden;
+  }
+</style>
+</head>
+<body>
+
+<div class="screen active" id="s-disclaimer">
+  <h1>FLIP</h1>
+  <h2>prototype</h2>
+  <p class="dim" style="max-width: 300px;">
+    Цель: один оборот по <strong>X</strong> и один по <strong>Z</strong> за один подброс.<br><br>
+    <strong style="color:#f33;">Разбитый телефон — твоя ответственность.</strong><br><br>
+    Играй над мягкой поверхностью.
+  </p>
+  <button id="btn-start">Я В ДЕЛЕ</button>
+</div>
+
+<div class="screen" id="s-ready">
+  <h2>готов</h2>
+  <div class="big">X+Z</div>
+  <p class="dim">Положи ровно на ладонь.<br>Подбрось с вращением по X и Z.</p>
+</div>
+
+<div class="screen" id="s-flight">
+  <h2>в воздухе</h2>
+  <div class="big" id="flight-count">0° · 0°</div>
+</div>
+
+<div class="screen" id="s-catch">
+  <h2>поймал</h2>
+  <div class="big dim">·</div>
+</div>
+
+<div class="screen" id="s-result">
+  <h2 id="result-verdict">—</h2>
+  <div class="axis">
+    <div id="ax-x">X: 0°</div>
+    <div id="ax-z">Z: 0°</div>
+  </div>
+  <button id="btn-again">ЕЩЁ</button>
+</div>
+
+<div id="log"></div>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+let logLines = [];
+function log(msg) {
+  logLines.unshift(msg);
+  logLines = logLines.slice(0, 8);
+  $('log').textContent = logLines.join('\n');
+}
+
+// === Настройки ===
+const FREE_FALL_THRESHOLD = 3.0;      // м/с² — ниже = отрыв
+const IMPACT_THRESHOLD = 25.0;        // м/с² — выше = поимка
+const FLIGHT_TIMEOUT_MS = 4000;
+const MIN_FLIGHT_MS = 150;
+const TOLERANCE_DEG = 75;             // ±75° от 360°
+const RESULT_DELAY_MS = 1000;
+const SENSOR_FREQ = 100;
+
+// === Состояние ===
+let accel = null, gyro = null;
+let state = 'DISCLAIMER';
+let gyroBias = { x: 0, y: 0, z: 0 };
+let totalRad = { x: 0, y: 0, z: 0 };
+let flightStart = 0;
+let lastT = 0;
+
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id).classList.add('active');
+}
+
+async function initSensors() {
+  if (!('Accelerometer' in window) || !('Gyroscope' in window)) {
+    throw new Error('Generic Sensor API не поддерживается');
+  }
+  accel = new Accelerometer({ frequency: SENSOR_FREQ });
+  gyro  = new Gyroscope({ frequency: SENSOR_FREQ });
+
+  await new Promise((resolve, reject) => {
+    let a = false, g = false;
+    const check = () => { if (a && g) resolve(); };
+    accel.addEventListener('reading', () => { a = true; check(); }, { once: true });
+    gyro .addEventListener('reading', () => { g = true; check(); }, { once: true });
+    accel.addEventListener('error', reject, { once: true });
+    gyro .addEventListener('error', reject, { once: true });
+    accel.start();
+    gyro.start();
+    setTimeout(() => { if (!a || !g) reject(new Error('Датчики молчат')); }, 3000);
+  });
+}
+
+function calibrate() {
+  const samples = [];
+  let count = 0;
+  return new Promise(resolve => {
+    const onRead = () => {
+      samples.push({ x: gyro.x, y: gyro.y, z: gyro.z });
+      if (++count >= 30) {
+        gyro.removeEventListener('reading', onRead);
+        gyroBias.x = samples.reduce((s, v) => s + v.x, 0) / samples.length;
+        gyroBias.y = samples.reduce((s, v) => s + v.y, 0) / samples.length;
+        gyroBias.z = samples.reduce((s, v) => s + v.z, 0) / samples.length;
+        log(`bias ${gyroBias.x.toFixed(3)} ${gyroBias.y.toFixed(3)} ${gyroBias.z.toFixed(3)}`);
+        resolve();
+      }
+    };
+    gyro.addEventListener('reading', onRead);
+  });
+}
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (!accel || !gyro) return;
+  const dt = lastT ? (now - lastT) / 1000 : 0;
+  lastT = now;
+  if (dt <= 0 || dt > 0.1) return;
+
+  const ax = accel.x, ay = accel.y, az = accel.z;
+  const mag = Math.sqrt(ax*ax + ay*ay + az*az);
+
+  if (state === 'READY') {
+    if (mag < FREE_FALL_THRESHOLD) {
+      state = 'FLIGHT';
+      totalRad = { x: 0, y: 0, z: 0 };
+      flightStart = now;
+      $('flight-count').textContent = '0° · 0°';
+      show('s-flight');
+      log(`release ${mag.toFixed(1)}`);
+    }
+  } else if (state === 'FLIGHT') {
+    const wx = gyro.x - gyroBias.x;
+    const wy = gyro.y - gyroBias.y;
+    const wz = gyro.z - gyroBias.z;
+    totalRad.x += Math.abs(wx) * dt;
+    totalRad.y += Math.abs(wy) * dt;
+    totalRad.z += Math.abs(wz) * dt;
+
+    const degX = Math.round(totalRad.x * 180 / Math.PI);
+    const degZ = Math.round(totalRad.z * 180 / Math.PI);
+    $('flight-count').textContent = `${degX}° · ${degZ}°`;
+
+    const flightMs = now - flightStart;
+    if (mag > IMPACT_THRESHOLD && flightMs > MIN_FLIGHT_MS) {
+      state = 'PENDING';
+      log(`catch ${mag.toFixed(1)} after ${Math.round(flightMs)}ms`);
+      if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+      show('s-catch');
+      setTimeout(() => { state = 'RESULT'; evaluate(); }, RESULT_DELAY_MS);
+    } else if (flightMs > FLIGHT_TIMEOUT_MS) {
+      state = 'RESULT';
+      $('result-verdict').textContent = 'ТАЙМАУТ';
+      $('result-verdict').style.color = '#f33';
+      $('ax-x').textContent = `X: ${Math.round(totalRad.x * 180 / Math.PI)}°`;
+      $('ax-z').textContent = `Z: ${Math.round(totalRad.z * 180 / Math.PI)}°`;
+      $('ax-x').className = 'fail';
+      $('ax-z').className = 'fail';
+      show('s-result');
+    }
+  }
+}
+
+function evaluate() {
+  const degX = totalRad.x * 180 / Math.PI;
+  const degZ = totalRad.z * 180 / Math.PI;
+  const xOK = Math.abs(degX - 360) < TOLERANCE_DEG;
+  const zOK = Math.abs(degZ - 360) < TOLERANCE_DEG;
+
+  $('ax-x').textContent = `X: ${Math.round(degX)}°`;
+  $('ax-z').textContent = `Z: ${Math.round(degZ)}°`;
+  $('ax-x').className = xOK ? 'ok' : 'fail';
+  $('ax-z').className = zOK ? 'ok' : 'fail';
+
+  const v = $('result-verdict');
+  if (xOK && zOK) {
+    v.textContent = 'ТРЮК!';
+    v.style.color = '#3f3';
+    if (navigator.vibrate) navigator.vibrate([40, 60, 40, 60, 40]);
+  } else {
+    v.textContent = 'ПРОМАХ';
+    v.style.color = '#f33';
+    if (navigator.vibrate) navigator.vibrate(150);
+  }
+  show('s-result');
+  log(`X=${degX.toFixed(0)} Z=${degZ.toFixed(0)}`);
+}
+
+$('btn-start').addEventListener('click', async () => {
+  try {
+    await initSensors();
+    await calibrate();
+    state = 'READY';
+    show('s-ready');
+    requestAnimationFrame(tick);
+  } catch (e) {
+    log('ERR ' + e.message);
+    alert('Не удалось получить доступ к датчикам.\n' + e.message +
+          '\n\nНужен HTTPS и реальный телефон.');
+  }
+});
+
+$('btn-again').addEventListener('click', () => {
+  state = 'READY';
+  show('s-ready');
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') lastT = 0;
+});
+</script>
+</body>
+</html>
